@@ -79,7 +79,8 @@ flags.DEFINE_string('input_config_path', '',
                     'Path to an input_reader_pb2.InputReader config file.')
 flags.DEFINE_string('model_config_path', '',
                     'Path to a model_pb2.DetectionModel config file.')
-
+flags.DEFINE_string('gpuid', '0',
+                    'Which GPU device to use. Separated by commas. Default is 0.')
 FLAGS = flags.FLAGS
 
 
@@ -153,7 +154,7 @@ def main(_):
     task = task_info.index
     is_chief = (task_info.type == 'master')
     master = server.target
-
+  os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpuid)
   trainer.train(create_input_dict_fn, model_fn, train_config, master, task,
                 FLAGS.num_clones, worker_replicas, FLAGS.clone_on_cpu, ps_tasks,
                 worker_job_name, is_chief, FLAGS.train_dir)
