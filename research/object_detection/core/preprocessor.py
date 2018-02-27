@@ -1757,14 +1757,14 @@ def resize_to_range(image,
     raise ValueError('Image should be 3D tensor')
 
   with tf.name_scope('ResizeToRange', values=[image, min_dimension]):
-    if image.get_shape().is_fully_defined():
-      new_size = _compute_new_static_size(image, min_dimension, max_dimension)
-    else:
-      new_size = _compute_new_dynamic_size(image, min_dimension, max_dimension)
-    new_image = tf.image.resize_images(
-        image, new_size, method=method, align_corners=align_corners)
-
-    result = new_image
+    # if image.get_shape().is_fully_defined():
+      # new_size = _compute_new_static_size(image, min_dimension, max_dimension)
+    # else:
+      # new_size = _compute_new_dynamic_size(image, min_dimension, max_dimension)
+    # new_image = tf.image.resize_images(
+        # image, new_size, method=method, align_corners=align_corners)
+    # result = new_image
+    result = image
     if masks is not None:
       new_masks = tf.expand_dims(masks, 3)
       new_masks = tf.image.resize_nearest_neighbor(
