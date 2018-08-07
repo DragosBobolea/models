@@ -46,6 +46,10 @@ Example usage:
 import functools
 import os
 import tensorflow as tf
+import sys
+
+sys.path.append("C:\\Work\\Repos\\models\\research")
+sys.path.append("C:\\Work\\Repos\\models\\research\\slim")
 
 from object_detection import evaluator
 from object_detection.builders import input_reader_builder
@@ -81,7 +85,14 @@ flags.DEFINE_string('gpuid', '0',
 FLAGS = flags.FLAGS
 os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpuid)
 
+def start_inline():
+    FLAGS.eval_dir="C:\\Work\\Experiments\\Dataset_new\\exp_2"
+    FLAGS.pipeline_config_path = "C:\\Work\\Experiments\\Dataset_new\\exp_2\\temp_dev.config"
+    FLAGS.run_once= True
+    FLAGS.checkpoint_dir = "C:\\Work\\Experiments\\Dataset_new\\Double_sizeBest\\freezed"
+
 def main(unused_argv):
+  #start_inline()
   assert FLAGS.checkpoint_dir, '`checkpoint_dir` is missing.'
   assert FLAGS.eval_dir, '`eval_dir` is missing.'
   tf.gfile.MakeDirs(FLAGS.eval_dir)

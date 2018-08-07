@@ -364,6 +364,7 @@ def random_horizontal_flip(image,
   with tf.name_scope('RandomHorizontalFlip', values=[image, boxes]):
     result = []
     # random variable defining whether to do flip or not
+    print(seed)
     do_a_flip_random = tf.greater(tf.random_uniform([], seed=seed), 0.5)
 
     # flip image
