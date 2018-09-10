@@ -79,6 +79,7 @@ from object_detection.core import standard_fields as fields
 from object_detection.core import target_assigner
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
+import object_detection.core.lstm2d as lstm2d
 
 slim = tf.contrib.slim
 
@@ -335,6 +336,11 @@ class FasterRCNNMetaArch(model.DetectionModel):
     self._feature_extractor = feature_extractor
     self._first_stage_only = first_stage_only
 
+    self._useFpn = False
+    if hasattr(self._feature_extractor, '_use_fpn'):    
+      self._useFpn = self._feature_extractor._use_fpn
+    self._useFpnInRpn = True
+
     # The first class is reserved as background.
     unmatched_cls_target = tf.constant(
         [1] + self._num_classes * [0], dtype=tf.float32)
@@ -356,7 +362,16 @@ class FasterRCNNMetaArch(model.DetectionModel):
     self._first_stage_minibatch_size = first_stage_minibatch_size
     self._first_stage_sampler = sampler.BalancedPositiveNegativeSampler(
         positive_fraction=first_stage_positive_balance_fraction)
-    self._first_stage_box_predictor = box_predictor.ConvolutionalBoxPredictor(
+    
+    if self._useFpn:
+      self._first_stage_box_predictor = box_predictor.FpnSharedWeightsConvolutionalBoxPredictor(
+        self._is_training, num_classes=1,
+        conv_hyperparams=self._first_stage_box_predictor_arg_scope,
+        min_depth=0, max_depth=0, num_layers_before_predictor=0,
+        use_dropout=False, dropout_keep_prob=1.0, kernel_size=1,
+        box_code_size=self._box_coder.code_size)
+    else:
+      self._first_stage_box_predictor = box_predictor.ConvolutionalBoxPredictor(
         self._is_training, num_classes=1,
         conv_hyperparams=self._first_stage_box_predictor_arg_scope,
         min_depth=0, max_depth=0, num_layers_before_predictor=0,
@@ -623,7 +638,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
 
     flattened_proposal_feature_maps = (
         self._compute_second_stage_input_feature_maps(
-            rpn_features_to_crop, proposal_boxes_normalized))
+            rpn_features_to_crop, proposal_boxes_normalized, image_shape))
 
     box_classifier_features = (
         self._feature_extractor.extract_box_classifier_features(
@@ -681,21 +696,49 @@ class FasterRCNNMetaArch(model.DetectionModel):
       image_shape: A 1-D tensor representing the input image shape.
     """
     image_shape = tf.shape(preprocessed_inputs)
-    rpn_features_to_crop = self._feature_extractor.extract_proposal_features(
-        preprocessed_inputs, scope=self.first_stage_feature_extractor_scope)
+    
 
-    feature_map_shape = tf.shape(rpn_features_to_crop)
-    anchors = self._first_stage_anchor_generator.generate(
+    proposal_features = self._feature_extractor.extract_proposal_features(
+        preprocessed_inputs, scope=self.first_stage_feature_extractor_scope)
+    
+    if self._useFpn:
+      proposal_features_temp = self.build_feature_pyramid(proposal_features)
+      feature_map_shapes = []
+
+      if self._useFpnInRpn:
+        for feature_index in range(len(proposal_features_temp)):
+          feature_map_shape = tf.shape(proposal_features_temp[feature_index])
+          feature_map_shapes.append((feature_map_shape[1], feature_map_shape[2]))            
+        anchors = self._first_stage_anchor_generator.generate(feature_map_shapes)
+        rpn_features_to_crop = [rpn_feature for rpn_feature in proposal_features_temp]
+      else:        
+        rpn_features_to_crop = [proposal_features[0]]
+        feature_map_shape = tf.shape(proposal_features[0])
+        anchors = self._first_stage_anchor_generator.generate([(feature_map_shape[1], feature_map_shape[2])])
+      
+      proposal_features = proposal_features_temp
+
+    else:
+      rpn_features_to_crop = [proposal_features[0]]
+
+      feature_map_shape = tf.shape(rpn_features_to_crop[0])
+      anchors = self._first_stage_anchor_generator.generate(
         [(feature_map_shape[1], feature_map_shape[2])])
     with slim.arg_scope(self._first_stage_box_predictor_arg_scope):
-      kernel_size = self._first_stage_box_predictor_kernel_size
-      rpn_box_predictor_features = slim.conv2d(
-          rpn_features_to_crop,
-          self._first_stage_box_predictor_depth,
-          kernel_size=[kernel_size, kernel_size],
-          rate=self._first_stage_atrous_rate,
-          activation_fn=tf.nn.relu6)
-    return (rpn_box_predictor_features, rpn_features_to_crop,
+        
+      kernel_size = self._first_stage_box_predictor_kernel_size      
+      for feature_index in range(len(rpn_features_to_crop)):
+        rpn_features_to_crop[feature_index] = slim.conv2d(
+            rpn_features_to_crop[feature_index],
+            self._first_stage_box_predictor_depth,
+            kernel_size=[kernel_size, kernel_size],
+            rate=self._first_stage_atrous_rate,
+            activation_fn=tf.nn.relu6)
+      if len(rpn_features_to_crop)==1:
+        rpn_features_to_crop = rpn_features_to_crop[0]
+
+
+    return (rpn_features_to_crop, proposal_features,
             anchors, image_shape)
 
   def _predict_rpn_proposals(self, rpn_box_predictor_features):
@@ -724,9 +767,14 @@ class FasterRCNNMetaArch(model.DetectionModel):
     """
     num_anchors_per_location = (
         self._first_stage_anchor_generator.num_anchors_per_location())
-    if len(num_anchors_per_location) != 1:
-      raise RuntimeError('anchor_generator is expected to generate anchors '
-                         'corresponding to a single feature map.')
+    if isinstance(rpn_box_predictor_features, (list,)):
+      if len(num_anchors_per_location) != len(rpn_box_predictor_features):
+        raise RuntimeError('anchor_generator is expected to generate anchors '
+                         'corresponding the number of feature maps.')
+    else:
+      if len(num_anchors_per_location) != 1:
+        raise RuntimeError('anchor_generator is expected to generate anchors '
+                         'corresponding to a single feature map')
     box_predictions = self._first_stage_box_predictor.predict(
         rpn_box_predictor_features,
         num_anchors_per_location[0],
@@ -859,6 +907,16 @@ class FasterRCNNMetaArch(model.DetectionModel):
           mask_predictions=mask_predictions)
       return detections_dict
 
+
+  #Adam Stefan offset bounding box#
+  def _offset_proposals(self, proposal_boxes, stride=0):
+    if stride>0:
+       proposal_boxes = proposal_boxes + (tf.constant([-8.0,-8.0, 8.0, 8.0]) * stride)      
+    return proposal_boxes
+
+        
+
+
   def _postprocess_rpn(self,
                        rpn_box_encodings_batch,
                        rpn_objectness_predictions_with_background_batch,
@@ -907,6 +965,11 @@ class FasterRCNNMetaArch(model.DetectionModel):
     proposal_boxes = self._batch_decode_boxes(rpn_box_encodings_batch,
                                               tiled_anchor_boxes)
     proposal_boxes = tf.squeeze(proposal_boxes, axis=2)
+
+    add_offset = False
+    if add_offset == True:
+        proposal_boxes = self._offset_proposals(proposal_boxes, stride=1)
+
     rpn_objectness_softmax_without_background = tf.nn.softmax(
         rpn_objectness_predictions_with_background_batch)[:, :, 1]
     clip_window = tf.to_float(tf.stack([0, 0, image_shape[1], image_shape[2]]))
@@ -935,7 +998,9 @@ class FasterRCNNMetaArch(model.DetectionModel):
         box_list.BoxList(proposal_boxes_reshaped),
         image_shape[1], image_shape[2], check_range=False).get()
     proposal_boxes = tf.reshape(normalized_proposal_boxes_reshaped,
-                                [-1, proposal_boxes.shape[1].value, 4])
+                                [-1, proposal_boxes.shape[1].value, 4],name="rpn_proposals_boxes")
+    proposal_scores = tf.identity(proposal_scores,"rpn_proposals_score")
+    
     return proposal_boxes, proposal_scores, num_proposals
 
   def _unpad_proposals_and_sample_box_classifier_batch(
@@ -1110,8 +1175,11 @@ class FasterRCNNMetaArch(model.DetectionModel):
         positive_indicator)
     return box_list_ops.boolean_mask(proposal_boxlist, sampled_indices)
 
+
+  
+
   def _compute_second_stage_input_feature_maps(self, features_to_crop,
-                                               proposal_boxes_normalized):
+                                               proposal_boxes_normalized, image_shape):
     """Crops to a set of proposals from the feature map for a batch of images.
 
     Helper function for self._postprocess_rpn. This function calls
@@ -1137,15 +1205,166 @@ class FasterRCNNMetaArch(model.DetectionModel):
           tf.range(start=0, limit=proposals_shape[0]), 1)
       return tf.reshape(ones_mat * multiplier, [-1])
 
-    cropped_regions = tf.image.crop_and_resize(
-        features_to_crop,
-        self._flatten_first_two_dimensions(proposal_boxes_normalized),
+    proposals_flatten = self._flatten_first_two_dimensions(proposal_boxes_normalized)
+    
+
+    #roi_level= log2_graph(tf.sqrt())
+
+    #features_pyramids = self.build_feature_pyramid(self, activations)
+    
+
+    cropped_regions = []
+    use_context_feature = False
+    #use_fpn = True
+
+    if self._useFpn:
+        #features_pyramids = self.build_feature_pyramid(features_to_crop)
+        cropped_regions = self.crop_features(features_to_crop, proposal_boxes_normalized, image_shape)
+        return slim.max_pool2d(cropped_regions,
+        [self._maxpool_kernel_size, self._maxpool_kernel_size],
+        stride=self._maxpool_stride)
+
+
+    if use_context_feature == True:
+        context_features =  lstm2d.separable_lstm(features_to_crop[0], 512, kernel_size=None, nhidden=None, scope='lstm2d-cf')
+        cropped_regions_part = tf.image.crop_and_resize(
+        context_features,
+        proposals_flatten,
         get_box_inds(proposal_boxes_normalized),
         (self._initial_crop_size, self._initial_crop_size))
+        #cropped_regions_part = tf.nn.l2_normalize(cropped_regions_part, axis=3)
+        cropped_regions.append(cropped_regions_part)
+
+    #image_shape = tf.shape(features_to_crop[0])
+
+
+    for i in range(len(features_to_crop)):        
+        cropped_regions_part = tf.image.crop_and_resize(
+            features_to_crop[i],
+            proposals_flatten,
+            get_box_inds(proposal_boxes_normalized),
+            (self._initial_crop_size, self._initial_crop_size))
+        if len(cropped_regions)>0 or len(features_to_crop)>1:
+            w_var = tf.Variable(initial_value=0.1,name=str(i)+"scale_var")
+            cropped_regions_part = cropped_regions_part * w_var
+        #    cropped_regions_part = tf.nn.l2_normalize(cropped_regions_part, axis=3)
+
+        cropped_regions.append(cropped_regions_part)
+
+    cropped_regions = tf.concat(cropped_regions, axis=3)
+
     return slim.max_pool2d(
         cropped_regions,
         [self._maxpool_kernel_size, self._maxpool_kernel_size],
         stride=self._maxpool_stride)
+  
+  def crop_features(self, features, boxes, image_shape):
+    image_area = tf.cast(image_shape[0]*image_shape[1],tf.float32)
+
+    def log2_graph(x):
+      """Implementatin of Log2. TF doesn't have a native implemenation."""
+      return tf.log(x) / tf.log(2.0)
+
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
+
+    h = y2 - y1
+    w = x2 - x1
+
+    proposals_flatten = self._flatten_first_two_dimensions(boxes)
+
+
+    roi_level = -log2_graph(tf.sqrt(h * w) / (256.0/tf.sqrt(image_area))) ## is 1 for a 224 shape
+    roi_level = tf.maximum(0, tf.minimum(len(features)-1, tf.cast(tf.round(roi_level), tf.int32)))
+
+    #roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
+    roi_level = tf.squeeze(roi_level, 2)
+
+    pooled = []
+    box_to_level = []
+
+    for i in range(len(features)):
+      ix = tf.where(tf.equal(roi_level, i))
+      level_boxes = tf.gather_nd(boxes, ix)
+
+      # Box indicies for crop_and_resize.
+      box_indices = tf.cast(ix[:, 0], tf.int32)
+
+
+      box_to_level.append(ix)
+
+
+      level_boxes = tf.stop_gradient(level_boxes)
+      box_indices = tf.stop_gradient(box_indices)
+
+      cropped_regions_part = tf.image.crop_and_resize(
+            features[i],
+            level_boxes,
+            box_indices,
+            (self._initial_crop_size, self._initial_crop_size))
+
+      pooled.append(cropped_regions_part)
+
+    pooled = tf.concat(pooled, axis=0)
+
+    box_to_level = tf.concat(box_to_level, axis=0)
+    box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
+    box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range],axis=1)
+
+    # Rearrange pooled features to match the order of the original boxes
+    # Sort box_to_level by batch then box index
+    # TF doesn't have a way to sort by two columns, so merge them and sort.
+    sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
+    ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
+        box_to_level)[0]).indices[::-1]
+    ix = tf.gather(box_to_level[:, 2], ix)
+    pooled = tf.gather(pooled, ix)
+
+    # Re-add the batch dimension
+    #pooled = tf.expand_dims(pooled, 0)
+    #shape_pooled = tf.shape(pooled)
+    pooled = tf.reshape(pooled,[proposals_flatten.shape[0].value,self._initial_crop_size,self._initial_crop_size,pooled.shape[-1].value])
+
+
+    return pooled
+           
+
+
+
+  def build_feature_pyramid(self, activations):     
+     feature_pyramid = []
+     dimension_depth = 256
+
+     def _apply_atrous_conv(inputs, num_outputs=256):         
+         layer = slim.conv2d(inputs, num_outputs, [3,3], stride=1, rate=2, padding='SAME')
+         return layer
+
+     with tf.variable_scope('build_feature_pyramid'):
+       with slim.arg_scope([slim.conv2d]):
+          index = 0
+          fp_last = _apply_atrous_conv(slim.conv2d(activations[0], num_outputs=dimension_depth, kernel_size=[1, 1], stride=1, scope='build_fpn_index'+str(index)))                              
+          index +=1
+          feature_pyramid.append( _apply_atrous_conv(slim.max_pool2d(fp_last, kernel_size=[2, 2], stride=2, scope='build'+str(index))))
+          feature_pyramid.append(fp_last)
+          
+          #for layer in range(4, 1, -1):
+          for i in range(len(activations)-1):
+            c = activations[i+1]
+            p = feature_pyramid[-1]            
+            up_sample_shape = tf.shape(c)
+            up_sample = tf.image.resize_nearest_neighbor(p, [up_sample_shape[1], up_sample_shape[2]],
+                                                                name='build_P%d/up_sample_nearest_neighbor' % i)
+
+            c = slim.conv2d(c, num_outputs=dimension_depth, kernel_size=[1, 1], stride=1,
+                                scope='build_P%d/reduce_dimension' % i)
+            #p = up_sample + c
+            p = tf.concat([up_sample, c], axis=3)
+             #return slim.conv2d(inputs, num_outputs, kernel_size, stride=1, rate=rate,
+             #          padding='SAME', scope=scope)
+            p = slim.conv2d(p, dimension_depth, kernel_size=[3, 3], stride=1, rate=2,
+                                padding='SAME', scope='build_P%d/avoid_aliasing' % i)
+            feature_pyramid.append(p)
+     return feature_pyramid
+
 
   def _postprocess_box_classifier(self,
                                   refined_box_encodings,
@@ -1487,7 +1706,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
       reshaped_refined_box_encodings = tf.reshape(
           refined_box_encodings_masked_by_class_targets,
           [batch_size, -1, 4])
-
+      
       second_stage_loc_losses = self._second_stage_localization_loss(
           reshaped_refined_box_encodings,
           batch_reg_targets, weights=batch_reg_weights) / normalizer

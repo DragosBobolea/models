@@ -41,9 +41,16 @@ Example usage:
         --input_config_path=train_input_config.pbtxt
 """
 
+
 import functools
 import json
 import os
+import sys
+
+sys.path.append("C:\\Work\\Repos\\models\\research")
+sys.path.append("C:\\Work\\Repos\\models\\research\\slim")
+
+
 import tensorflow as tf
 
 from object_detection import trainer
@@ -83,8 +90,18 @@ flags.DEFINE_string('gpuid', '0',
                     'Which GPU device to use. Separated by commas. Default is 0.')
 FLAGS = flags.FLAGS
 
+def start_inline():
+    #FLAGS.train_dir="C:\\Work\\Experiments\\New_arch_test_1"
+    #FLAGS.pipeline_config_path = "C:\\Work\\Experiments\\New_arch_test_1\\temp_train.config"
+
+    FLAGS.train_dir="C:\\Work\\Experiments\\New_arch_fpn_atrous"
+    FLAGS.pipeline_config_path = "C:\\Work\\Experiments\\New_arch_fpn_atrous\\temp_train.config"
+
+
 
 def main(_):
+  start_inline()
+  
   assert FLAGS.train_dir, '`train_dir` is missing.'
   if FLAGS.task == 0: tf.gfile.MakeDirs(FLAGS.train_dir)
   if FLAGS.pipeline_config_path:
@@ -155,10 +172,12 @@ def main(_):
     is_chief = (task_info.type == 'master')
     master = server.target
   os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpuid)
+
+  import numpy as np
+  print("Random",np.random.random())
   trainer.train(create_input_dict_fn, model_fn, train_config, master, task,
                 FLAGS.num_clones, worker_replicas, FLAGS.clone_on_cpu, ps_tasks,
                 worker_job_name, is_chief, FLAGS.train_dir)
-
 
 if __name__ == '__main__':
   tf.app.run()
