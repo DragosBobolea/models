@@ -27,7 +27,7 @@ def multiclass_non_max_suppression(boxes,
                                    score_thresh,
                                    iou_thresh,
                                    max_size_per_class,
-                                   max_total_size=0,
+                                   max_total_size=None,
                                    clip_window=None,
                                    change_coordinate_frame=False,
                                    masks=None,
@@ -154,7 +154,7 @@ def multiclass_non_max_suppression(boxes,
     selected_boxes = box_list_ops.concatenate(selected_boxes_list)
     sorted_boxes = box_list_ops.sort_by_field(selected_boxes,
                                               fields.BoxListFields.scores)
-    if max_total_size:
+    if max_total_size is not None:
       max_total_size = tf.minimum(max_total_size,
                                   sorted_boxes.num_boxes())
       sorted_boxes = box_list_ops.gather(sorted_boxes,
@@ -167,7 +167,7 @@ def batch_multiclass_non_max_suppression(boxes,
                                          score_thresh,
                                          iou_thresh,
                                          max_size_per_class,
-                                         max_total_size=0,
+                                         max_total_size=None,
                                          clip_window=None,
                                          change_coordinate_frame=False,
                                          num_valid_boxes=None,
