@@ -380,7 +380,7 @@ class FasterRCNNMetaArch(model.DetectionModel):
 
     self._first_stage_nms_score_threshold = first_stage_nms_score_threshold
     self._first_stage_nms_iou_threshold = first_stage_nms_iou_threshold
-    self._first_stage_max_proposals = first_stage_max_proposals
+    self._first_stage_max_proposals = tf.placeholder_with_default(first_stage_max_proposals, shape=[], name="nr_max_proposals")
 
     self._first_stage_localization_loss = (
         losses.WeightedSmoothL1LocalizationLoss(anchorwise_output=True))
@@ -992,13 +992,17 @@ class FasterRCNNMetaArch(model.DetectionModel):
          num_proposals) = self._unpad_proposals_and_sample_box_classifier_batch(
              proposal_boxes, proposal_scores, num_proposals,
              groundtruth_boxlists, groundtruth_classes_with_background_list)
+
     # normalize proposal boxes
     proposal_boxes_reshaped = tf.reshape(proposal_boxes, [-1, 4])
     normalized_proposal_boxes_reshaped = box_list_ops.to_normalized_coordinates(
         box_list.BoxList(proposal_boxes_reshaped),
         image_shape[1], image_shape[2], check_range=False).get()
+
+    # get actual number of proposal boxes
+    nr_proposal_boxes =  proposal_boxes.shape[1].value if proposal_boxes.shape[1].value is not None else tf.shape(proposal_boxes)[1]
     proposal_boxes = tf.reshape(normalized_proposal_boxes_reshaped,
-                                [-1, proposal_boxes.shape[1].value, 4],name="rpn_proposals_boxes")
+                                [-1, nr_proposal_boxes, 4],name="rpn_proposals_boxes")
     proposal_scores = tf.identity(proposal_scores,"rpn_proposals_score")
     
     return proposal_boxes, proposal_scores, num_proposals
