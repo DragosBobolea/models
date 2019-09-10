@@ -37,6 +37,8 @@ from object_detection.models import faster_rcnn_inception_v2_feature_extractor a
 from object_detection.models import faster_rcnn_nas_feature_extractor as frcnn_nas
 from object_detection.models import faster_rcnn_pnas_feature_extractor as frcnn_pnas
 from object_detection.models import faster_rcnn_resnet_v1_feature_extractor as frcnn_resnet_v1
+from object_detection.models import faster_rcnn_mobilenet_v1_feature_extractor as frcnn_mobilenet_v1
+from object_detection.models import faster_rcnn_mobilenet_v2_feature_extractor as frcnn_mobilenet_v2
 from object_detection.models import ssd_resnet_v1_fpn_feature_extractor as ssd_resnet_v1_fpn
 from object_detection.models import ssd_resnet_v1_ppn_feature_extractor as ssd_resnet_v1_ppn
 from object_detection.models.embedded_ssd_mobilenet_v1_feature_extractor import EmbeddedSSDMobileNetV1FeatureExtractor
@@ -97,6 +99,10 @@ FASTER_RCNN_FEATURE_EXTRACTOR_CLASS_MAP = {
     frcnn_resnet_v1.FasterRCNNResnet101FeatureExtractor,
     'faster_rcnn_resnet152':
     frcnn_resnet_v1.FasterRCNNResnet152FeatureExtractor,
+    'faster_rcnn_mobilenet_v1':
+    frcnn_mobilenet_v1.FasterRCNNMobilenetV1FeatureExtractor,
+    'faster_rcnn_mobilenet_v2':
+    frcnn_mobilenet_v2.FasterRCNNMobilenetV2FeatureExtractor,
 }
 
 
