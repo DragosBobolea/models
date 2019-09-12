@@ -84,6 +84,7 @@ flags.DEFINE_string('gpuid', '0',
                     'Which GPU device to use. Separated by commas. Default is 0.')
 FLAGS = flags.FLAGS
 os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpuid)
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 def main(unused_argv):
   assert FLAGS.checkpoint_dir, '`checkpoint_dir` is missing.'
