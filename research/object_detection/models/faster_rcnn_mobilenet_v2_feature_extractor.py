@@ -105,13 +105,17 @@ class FasterRCNNMobilenetV2FeatureExtractor(
 
         with tf.variable_scope('MobilenetV2', reuse=self._reuse_weights) as scope:
             print('[Virgil] self._first_stage_features_stride = {}'.format(self._first_stage_features_stride), flush=True)
-            with  slim.arg_scope([mobilenet_v2.mobilenet_base], depth_multiplier=self._depth_multiplier, min_depth=self._min_depth, output_stride=self._first_stage_features_stride, final_endpoint='layer_14'):
+            with  slim.arg_scope([mobilenet_v2.mobilenet_base],
+                                    depth_multiplier=self._depth_multiplier,
+                                    min_depth=self._min_depth,
+                                    output_stride=self._first_stage_features_stride,
+                                    final_endpoint='layer_14'):
                 if self._is_training:
                     #use mobile net training scope
                     with slim.arg_scope(mobilenet_v2.training_scope(weight_decay=self._weight_decay)):
-                        net, activations = mobilenet_v2.mobilenet_base(preprocessed_inputs, conv_defs=mobilenet_v2.V2_DEF)
+                        net, activations = mobilenet_v2.mobilenet_base(preprocessed_inputs, conv_defs=mobilenet_v2.V2_DEF_UiPath)
                 else:
-                    net, activations = mobilenet_v2.mobilenet_base(preprocessed_inputs, conv_defs=mobilenet_v2.V2_DEF)
+                    net, activations = mobilenet_v2.mobilenet_base(preprocessed_inputs, conv_defs=mobilenet_v2.V2_DEF_UiPath)
 
         return net, activations
 
